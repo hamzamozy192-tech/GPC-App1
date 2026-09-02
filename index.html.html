@@ -270,7 +270,14 @@
       <div class="auth-error" id="authError"></div>
       <form id="authForm">
         <div class="field"><label>البريد الإلكتروني</label><input type="email" id="authEmail" required autocomplete="username"></div>
+       
         <div class="field"><label>كلمة السر</label><input type="password" id="authPassword" required minlength="6" autocomplete="current-password"></div>
+        <select id="authJobTitle" style="display:none; width:100%; padding:12px 14px; border:1.5px solid var(--line); border-radius:12px; font-size:14px; background:#FCFAF6; color:var(--ink); margin:10px 0;">
+    <option value="" disabled selected>اختر الوظيفة</option>
+    <option value="مندوب مبيعات">مندوب مبيعات</option>
+    <option value="محاسب">محاسب</option>
+    <option value="مدير فرع">مدير فرع</option>
+</select>
         <button type="submit" class="btn btn-primary btn-block" id="authSubmitBtn">دخول</button>
       </form>
       <div class="auth-loading" id="authLoading">جارِ التحقق…</div>
@@ -306,6 +313,7 @@
   <button class="tab-btn" data-tab="manufacturing"><span class="ic">🏭</span><span class="lb">التصنيع</span></button>
   <button class="tab-btn" data-tab="sales"><span class="ic">🧾</span><span class="lb">المبيعات</span></button>
   <button class="tab-btn" data-tab="salaries"><span class="ic">💰</span><span class="lb">المرتبات</span></button>
+  <button class="tab-btn" data-tab="admin" style="display:none;"><span class="ic">⚙️</span><span class="lb">المدير</span></button>
 </nav>
 </div>
 
@@ -320,7 +328,7 @@ import {
   createUserWithEmailAndPassword, signOut, sendPasswordResetEmail
 } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js";
 import {
-  getFirestore, doc, getDoc, setDoc
+  getFirestore, doc, getDoc, setDoc, collection, getDocs, deleteDoc
 } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -365,6 +373,9 @@ function setAuthMode(mode){
   }
   authError.classList.remove('show');
   document.getElementById('authToggleLink').onclick = ()=> setAuthMode(mode==='login'?'signup':'login');
+  
+  // إظهار/إخفاء حقل الوظيفة
+  document.getElementById('authJobTitle').style.display = mode==='signup' ? 'block' : 'none';
 }
 setAuthMode('login');
 
@@ -392,43 +403,138 @@ function authErrorMessage(e){
     'auth/weak-password':'كلمة السر لازم تكون 6 أحرف على الأقل',
     'auth/too-many-requests':'محاولات كتير خاطئة، حاول بعد شوية',
     'auth/network-request-failed':'تحقق من اتصال الإنترنت',
-    'auth/operation-not-allowed':'تسجيل الدخول بالبريد وكلمة السر مش مفعّل في Firebase — فعّله من Authentication ← Sign-in method',
+    'auth/operation-not-allowed':'تسجيل الدخو ل بالبريد وكلمة السر مش مفعّل في Firebase — فعّله من Authentication ← Sign-in method',
     'auth/invalid-api-key':'مفتاح Firebase غير صحيح',
     'auth/configuration-not-found':'إعدادات تسجيل الدخول غير مكتملة في مشروع Firebase',
   };
   return map[code] || 'حصل خطأ، حاول تاني';
 }
 
+const ADMIN_EMAIL = 'biolexpharma@gmail.com';
+
 authForm.onsubmit = async (ev)=>{
   ev.preventDefault();
-  const email = document.getElementById('authEmail').value.trim();
+  const email = document.getElementById('authEmail').value.trim().toLowerCase();
   const password = document.getElementById('authPassword').value;
+  const jobTitle = document.getElementById('authJobTitle').value;
+  
   authError.classList.remove('show');
   authForm.style.display = 'none';
   authLoading.classList.add('show');
+  
   try{
     if(authMode==='login'){
       await signInWithEmailAndPassword(auth, email, password);
     }else{
-      await createUserWithEmailAndPassword(auth, email, password);
+      if(!jobTitle){
+        throw new Error('من فضلك اختر الوظيفة');
+      }
+      const cred = await createUserWithEmailAndPassword(auth, email, password);
+      const uid = cred.user.uid;
+      
+      // تحديد الدور والصلاحيات
+      const isAdmin = email === ADMIN_EMAIL;
+      const userMeta = {
+        email: email,
+        name: email.split('@')[0],
+        jobTitle: jobTitle,
+        role: isAdmin ? 'super_admin' : 'representative',
+        isApproved: isAdmin,
+        permissions: isAdmin ? ['all'] : [],
+        createdAt: Date.now()
+      };
+      
+      // حفظ بيانات المستخدم
+      await setDoc(doc(db, 'users_meta', uid), userMeta);
     }
   }catch(e){
     console.error('Auth error:', e);
-    authError.textContent = authErrorMessage(e) + (e && e.code ? ' ('+e.code+')' : '');
+    authError.textContent = (e && e.message ? e.message : authErrorMessage(e)) + (e && e.code ? ' ('+e.code+')' : '');
     authError.classList.add('show');
     authForm.style.display = '';
     authLoading.classList.remove('show');
   }
 };
 
+let currentUserMeta = null;
+
 onAuthStateChanged(auth, async (user)=>{
   if(user){
     currentUser = user;
+    
+    // جلب بيانات المستخدم
+    try {
+      const metaSnap = await getDoc(doc(db, 'users_meta', user.uid));
+      if(metaSnap.exists()){
+        currentUserMeta = metaSnap.data();
+      } else {
+        currentUserMeta = { role: 'representative', isApproved: false, permissions: [] };
+      }
+    } catch(e) {
+      console.error('Error fetching user meta:', e);
+      currentUserMeta = { role: 'representative', isApproved: false, permissions: [] };
+    }
+    
+    // التحقق من الموافقة
+    const isAdmin = user.email && user.email.toLowerCase() === ADMIN_EMAIL;
+    if(!isAdmin && !currentUserMeta.isApproved){
+      await signOut(auth);
+      authError.textContent = '⏳ حسابك قيد المراجعة من قبل المدير. يرجى الانتظار حتى تتم الموافقة عليه.';
+      authError.classList.add('show');
+      authScreen.classList.remove('hide');
+      return;
+    }
+    
     authScreen.classList.add('hide');
     authForm.style.display = '';
     authLoading.classList.remove('show');
     authForm.reset();
     appRoot.style.display = '';
+    document.getElementById('splash').style.display = 'flex';
+    
+    // إخفاء التبويبات حسب الصلاحيات
+    applyPermissions();
+    
+    await loadAll();
+    render();
+    setTimeout(()=>{ document.getElementById('splash').classList.add('hide'); }, 900);
+  }else{
+    currentUser = null;
+    currentUserMeta = null;
+    appRoot.style.display = 'none';
+    document.getElementById('splash').classList.add('hide');
+    document.getElementById('splash').style.display = 'none';
+    authScreen.classList.remove('hide');
+  }
+});
+
+// دالة إخفاء التبويبات حسب الصلاحيات
+function applyPermissions(){
+  if(!currentUserMeta) return;
+  const perms = currentUserMeta.permissions || [];
+  const isAdmin = currentUserMeta.role === 'super_admin';
+  
+  const tabMap = {
+    'products': 'view_products',
+    'manufacturing': 'view_manufacturing',
+    'sales': 'view_invoices',
+    'salaries': 'view_salaries',
+    'dashboard': 'view_dashboard'
+  };
+  
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    const tab = btn.dataset.tab;
+    if(tab === 'admin') return;
+    
+    if(isAdmin){
+      btn.style.display = 'flex';
+    } else {
+      const requiredPerm = tabMap[tab];
+      const hasPermission = perms.includes('all') || perms.includes(requiredPerm);
+      btn.style.display = hasPermission ? 'flex' : 'none';
+    }
+  });
+}
     document.getElementById('splash').style.display = 'flex';
     await loadAll();
     render();
@@ -542,6 +648,68 @@ function setHeader(title, sub){
   document.getElementById('pageTitle').textContent = title;
   document.getElementById('pageSub').textContent = sub;
 }
+  async function renderAdmin(){
+  setHeader('⚙️ لوحة تحكم المدير', 'إدارة المندوبين وتحديد صلاحياتهم');
+  
+  let html = '<div style="padding:16px;">';
+  html += '<div style="background:#E6F4EA; padding:12px; border-radius:10px; margin-bottom:16px; font-size:13px; color:#1E7A3F;"><strong>💡 ملاحظة:</strong> ضع علامة على الصلاحيات التي تريد منحها للمندوب، ثم اضغط "حفظ التعديلات".</div>';
+  
+  try {
+    const snap = await getDocs(collection(db, 'users_meta'));
+    const users = [];
+    snap.forEach(docSnap => {
+      const data = docSnap.data();
+      if(data.email && data.email.toLowerCase() !== ADMIN_EMAIL){
+        users.push({ id: docSnap.id, ...data });
+      }
+    });
+    
+    if(!users.length){
+      html += '<div class="empty"><div class="big">👥</div>لا يوجد مستخدمون مسجلون حتى الآن<div class="hint">عندما يسجل أي مندوب، سيظهر هنا للموافقة عليه</div></div>';
+    } else {
+      const permsList = [
+        { key: 'view_dashboard', label: '🏠 الرئيسية' },
+        { key: 'view_products', label: '🧴 المنتجات' },
+        { key: 'view_manufacturing', label: '🏭 التصنيع' },
+        { key: 'view_invoices', label: '🧾 الفواتير (المبيعات)' },
+        { key: 'view_salaries', label: '💰 المرتبات' }
+      ];
+      
+      users.forEach(u => {
+        const isApproved = u.isApproved;
+        const userPerms = u.permissions || [];
+        
+        html += `<div class="card" style="margin-bottom:12px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+            <div>
+              <div style="font-weight:800; font-size:15px; color:var(--ink);">${esc(u.name || 'مستخدم')}</div>
+              <div style="font-size:12px; color:var(--ink-soft); margin-top:2px;">${esc(u.email)} — ${esc(u.jobTitle || 'غير محدد')}</div>
+            </div>
+            <span class="chip ${isApproved ? 'ok' : 'warn'}">${isApproved ? '✅ معتمد' : '⏳ معلق'}</span>
+          </div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:10px 0;">
+            ${permsList.map(p => `
+              <label style="display:flex; align-items:center; gap:6px; font-size:13px; cursor:pointer; background:#FCFAF6; padding:8px 10px; border-radius:8px; border:1px solid var(--line);">
+                <input type="checkbox" class="perm-check" data-uid="${u.id}" data-perm="${p.key}" ${userPerms.includes(p.key) || userPerms.includes('all') ? 'checked' : ''}>
+                <span>${p.label}</span>
+              </label>
+            `).join('')}
+          </div>
+          <div style="display:flex; gap:8px; margin-top:10px;">
+            ${!isApproved ? `<button class="btn btn-primary btn-sm admin-approve" data-uid="${u.id}">✅ موافقة ومنح الصلاحيات</button>` : `<button class="btn btn-ghost btn-sm admin-save" data-uid="${u.id}">💾 حفظ التعديلات</button>`}
+            <button class="btn btn-danger btn-sm admin-reject" data-uid="${u.id}">🗑 رفض/حذف</button>
+          </div>
+        </div>`;
+      });
+    }
+  } catch(e){
+    console.error('Error loading users:', e);
+    html += '<div class="empty"><div class="big">⚠️</div>تعذر تحميل المستخدمين</div>';
+  }
+  
+  html += '</div>';
+  return html;
+}
 function render(){
   const c = document.getElementById('content');
   document.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active', b.dataset.tab===ACTIVE_TAB));
@@ -550,6 +718,7 @@ function render(){
   else if(ACTIVE_TAB==='manufacturing') c.innerHTML = renderManufacturing();
   else if(ACTIVE_TAB==='sales') c.innerHTML = renderSales();
   else if(ACTIVE_TAB==='salaries') c.innerHTML = renderSalaries();
+  else if(ACTIVE_TAB==='admin') c.innerHTML = renderAdmin();
   attachHandlers();
 }
 
@@ -1000,13 +1169,61 @@ function attachHandlers(){
     };
   });
   document.querySelectorAll('.go-tab').forEach(b=> b.onclick = ()=>{ ACTIVE_TAB=b.dataset.go; render(); });
-
   if(ACTIVE_TAB==='products') wireProducts();
   if(ACTIVE_TAB==='manufacturing') wireManufacturing();
   if(ACTIVE_TAB==='sales') wireSales();
   if(ACTIVE_TAB==='salaries') wireSalaries();
+  if(ACTIVE_TAB==='admin') wireAdmin();
 }
 
+function wireAdmin(){
+  document.querySelectorAll('.admin-approve').forEach(btn => {
+    btn.onclick = async () => {
+      const uid = btn.dataset.uid;
+      const selectedPerms = Array.from(document.querySelectorAll(`input[data-uid="${uid}"]:checked`)).map(cb => cb.dataset.perm);
+      try {
+        await setDoc(doc(db, 'users_meta', uid), { 
+          isApproved: true, 
+          permissions: selectedPerms 
+        }, { merge: true });
+        showToast('✅ تمت الموافقة ومنح الصلاحيات');
+        render();
+      } catch(e){
+        showToast('حدث خطأ: ' + e.message);
+      }
+    };
+  });
+  
+  document.querySelectorAll('.admin-save').forEach(btn => {
+    btn.onclick = async () => {
+      const uid = btn.dataset.uid;
+      const selectedPerms = Array.from(document.querySelectorAll(`input[data-uid="${uid}"]:checked`)).map(cb => cb.dataset.perm);
+      try {
+        await setDoc(doc(db, 'users_meta', uid), { 
+          permissions: selectedPerms 
+        }, { merge: true });
+        showToast('💾 تم حفظ التعديلات');
+        render();
+      } catch(e){
+        showToast('حدث خطأ: ' + e.message);
+      }
+    };
+  });
+  
+  document.querySelectorAll('.admin-reject').forEach(btn => {
+    btn.onclick = async () => {
+      if(!confirm('هل أنت متأكد من حذف/رفض هذا المستخدم؟')) return;
+      const uid = btn.dataset.uid;
+      try {
+        await deleteDoc(doc(db, 'users_meta', uid));
+        showToast('🗑 تم حذف المستخدم');
+        render();
+      } catch(e){
+        showToast('حدث خطأ: ' + e.message);
+      }
+    };
+  });
+}
 /* ---- Products wiring ---- */
 function wireProducts(){
   const addBtn = document.getElementById('addProductBtn');
