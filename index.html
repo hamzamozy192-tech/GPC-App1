@@ -4,9 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no">
 <title>Global Pharma Cure</title>
-<link rel="manifest" href="manifest.json">
-<link rel="icon" href="assets/icon-512.png">
-<link rel="apple-touch-icon" href="assets/icon-192.png">
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png">
+<link rel="apple-touch-icon" href="/icon-512.png">
 <meta name="theme-color" content="#2B3B2E">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -342,9 +342,7 @@ import {
 
 /* بريد الأدمن الوحيد الذي يملك صلاحية كاملة والموافقة على المستخدمين */
 const ADMIN_EMAILS = ["biolexpharma@gmail.com", "globalpharma12@gmail.com"];
-function isAdminEmail(email){
-  return ADMIN_EMAILS.includes((email||'').toLowerCase());
-}
+function isAdminEmail(email){ return ADMIN_EMAILS.includes((email||'').toLowerCase()); }
 /* أسماء التبويبات لعرضها في لوحة الأدمن */
 const TAB_LABELS = {
   dashboard: "الرئيسية",
@@ -489,42 +487,49 @@ onAuthStateChanged(auth, async (user)=>{
     authForm.reset();
     pendingScreen.style.display = 'none';
 
-    const isAdmin = isAdminEmail(user.email);
-    if(isAdmin){
-      CURRENT_ROLE = 'admin';
-      CURRENT_PERMS = {dashboard:true, products:true, manufacturing:true, sales:true, salaries:true};
-    }else{
-      let profile = null;
-      try{
-        const snap = await getDoc(doc(db, 'users', user.uid));
-        if(snap.exists()) profile = snap.data();
-      }catch(e){ console.error('profile fetch error', e); }
+    try{
+      const isAdmin = isAdminEmail(user.email);
+      if(isAdmin){
+        CURRENT_ROLE = 'admin';
+        CURRENT_PERMS = {dashboard:true, products:true, manufacturing:true, sales:true, salaries:true};
+      }else{
+        let profile = null;
+        try{
+          const snap = await getDoc(doc(db, 'users', user.uid));
+          if(snap.exists()) profile = snap.data();
+        }catch(e){ console.error('profile fetch error', e); }
 
-      if(!profile){
-        // نادراً ما يحدث (مثلاً حساب قديم من قبل هذا التحديث) — نعامله كمنتظر
-        showPending('تم تسجيل دخولك، لكن لا يوجد ملف صلاحيات لحسابك. تواصل مع الأدمن.');
-        return;
+        if(!profile){
+          showPending('تم تسجيل دخولك، لكن لا يوجد ملف صلاحيات لحسابك. تواصل مع الأدمن.');
+          return;
+        }
+        if(profile.status === 'rejected'){
+          showPending('تم رفض طلب انضمامك من الأدمن. تواصل معه لمزيد من التفاصيل.');
+          return;
+        }
+        if(profile.status !== 'approved'){
+          showPending('تم إنشاء حسابك بنجاح. بانتظار موافقة الأدمن على الوظيفة: ' + (profile.job || '—'));
+          return;
+        }
+        CURRENT_ROLE = 'rep';
+        CURRENT_PERMS = Object.assign({dashboard:false, products:false, manufacturing:false, sales:false, salaries:false}, profile.permissions || {});
       }
-      if(profile.status === 'rejected'){
-        showPending('تم رفض طلب انضمامك من الأدمن. تواصل معه لمزيد من التفاصيل.');
-        return;
-      }
-      if(profile.status !== 'approved'){
-        showPending('تم إنشاء حسابك بنجاح. بانتظار موافقة الأدمن على الوظيفة: ' + (profile.job || '—'));
-        return;
-      }
-      CURRENT_ROLE = 'rep';
-      CURRENT_PERMS = Object.assign({dashboard:false, products:false, manufacturing:false, sales:false, salaries:false}, profile.permissions || {});
+
+      authScreen.classList.add('hide');
+      const adminBtn = document.getElementById('adminUsersBtn');
+      if(adminBtn) adminBtn.style.display = CURRENT_ROLE==='admin' ? '' : 'none';
+      applyTabPermissions();
+      appRoot.style.display = '';
+      document.getElementById('splash').classList.remove('hide');
+      document.getElementById('splash').style.display = 'flex';
+      await loadAll();
+      render();
+    }catch(e){
+      console.error('App load error:', e);
+      showToast('حصل خطأ أثناء تحميل التطبيق: ' + (e && e.message ? e.message : 'غير معروف'));
+    }finally{
+      setTimeout(()=>{ document.getElementById('splash').classList.add('hide'); }, 700);
     }
-
-    authScreen.classList.add('hide');
-    document.getElementById('adminUsersBtn').style.display = CURRENT_ROLE==='admin' ? '' : 'none';
-    applyTabPermissions();
-    appRoot.style.display = '';
-    document.getElementById('splash').style.display = 'flex';
-    await loadAll();
-    render();
-    setTimeout(()=>{ document.getElementById('splash').classList.add('hide'); }, 900);
   }else{
     currentUser = null;
     appRoot.style.display = 'none';
@@ -1472,10 +1477,6 @@ document.querySelectorAll('.tab-btn').forEach(b=>{
   b.onclick = ()=>{ ACTIVE_TAB = b.dataset.tab; render(); };
 });
 document.getElementById('overlay').addEventListener('click', (e)=>{ if(e.target.id==='overlay') closeModal(); });
-
-if('serviceWorker' in navigator){
-  window.addEventListener('load', ()=> navigator.serviceWorker.register('sw.js').catch(()=>{}));
-}
 
 /* ================= INIT ================= */
 /* App bootstrap now happens inside onAuthStateChanged above:
