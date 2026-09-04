@@ -374,6 +374,22 @@ let authMode = 'login'; // 'login' | 'signup'
 /* ================= AUTH UI WIRING ================= */
 const authScreen = document.getElementById('authScreen');
 const appRoot = document.getElementById('appRoot');
+
+/* Safety watchdog: if the splash screen is still showing 15 seconds after
+   load (e.g. a stuck/blocked network request), force it away and show a
+   clear retry message instead of leaving the person staring at a spinner
+   forever. */
+setTimeout(()=>{
+  const splashEl = document.getElementById('splash');
+  if(splashEl && splashEl.style.display !== 'none' && !splashEl.classList.contains('hide')){
+    splashEl.innerHTML = `
+      <img src="/icon-512.png" alt="Global Pharma Cure" style="width:min(45vw,160px);">
+      <p style="margin-top:16px; font-weight:800; color:#B5493B; text-align:center; padding:0 24px;">تعذّر تحميل التطبيق</p>
+      <p style="margin-top:6px; font-size:13px; color:#6B7263; text-align:center; padding:0 30px;">تحقّق من اتصال الإنترنت وحاول تاني</p>
+      <button onclick="location.reload()" style="margin-top:18px; background:#2B3B2E; color:#fff; border:none; padding:12px 28px; border-radius:11px; font-weight:700; font-size:14px;">إعادة المحاولة</button>
+    `;
+  }
+}, 15000);
 const authForm = document.getElementById('authForm');
 const authError = document.getElementById('authError');
 const authLoading = document.getElementById('authLoading');
@@ -514,8 +530,8 @@ onAuthStateChanged(auth, async (user)=>{
       }else{
         let profile = null;
         try{
-          const snap = await getDoc(doc(db, 'users', user.uid));
-          if(snap.exists()) profile = snap.data();
+          const snap = await withTimeout(getDoc(doc(db, 'users', user.uid)), 8000, null);
+          if(snap && snap.exists && snap.exists()) profile = snap.data();
         }catch(e){ console.error('profile fetch error', e); }
 
         if(!profile){
@@ -653,11 +669,25 @@ async function loadAdminUsers(){
    shared location so every approved employee — admin or rep — reads and
    writes the exact same data. Only the admin's own profile doc is per-uid. */
 const COMPANY_PATH = ['companies', 'gpc', 'appData'];
+/* If a Firestore call takes longer than `ms`, stop waiting and use `fallback`
+   instead of hanging forever (protects against slow/blocked networks). */
+function withTimeout(promise, ms, fallback){
+  return new Promise((resolve)=>{
+    let settled = false;
+    const timer = setTimeout(()=>{
+      if(!settled){ settled = true; console.warn('Firestore call timed out after', ms, 'ms'); resolve(fallback); }
+    }, ms);
+    promise.then((v)=>{ if(!settled){ settled = true; clearTimeout(timer); resolve(v); } })
+           .catch((e)=>{ if(!settled){ settled = true; clearTimeout(timer); console.error(e); resolve(fallback); } });
+  });
+}
+
 async function loadData(key, fallback){
   try{
     if(!currentUser) return fallback;
     const ref = doc(db, ...COMPANY_PATH, key);
-    const snap = await getDoc(ref);
+    const snap = await withTimeout(getDoc(ref), 8000, null);
+    if(snap === null) return fallback; // timed out
     return snap.exists() ? JSON.parse(snap.data().json) : fallback;
   }catch(e){ console.error('load error', e); return fallback; }
 }
@@ -665,7 +695,7 @@ async function saveData(key, value){
   try{
     if(!currentUser) return;
     const ref = doc(db, ...COMPANY_PATH, key);
-    await setDoc(ref, {json: JSON.stringify(value), updatedAt: Date.now(), updatedBy: currentUser.email || currentUser.uid});
+    await withTimeout(setDoc(ref, {json: JSON.stringify(value), updatedAt: Date.now(), updatedBy: currentUser.email || currentUser.uid}), 8000, null);
   }catch(e){ console.error('storage error', e); showToast('تعذّر الحفظ، تحقق من الاتصال بالإنترنت'); }
 }
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
