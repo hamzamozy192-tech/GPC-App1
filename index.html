@@ -271,7 +271,10 @@
       <form id="authForm">
         <div class="field"><label>البريد الإلكتروني</label><input type="email" id="authEmail" required autocomplete="username"></div>
         <div class="field"><label>كلمة السر</label><input type="password" id="authPassword" required minlength="6" autocomplete="current-password"></div>
-        <div class="field" id="authJobField" style="display:none;"><label>الوظيفة</label><input type="text" id="authJob" placeholder="مثال: مندوب مبيعات - القاهرة" autocomplete="off"></div>
+        <div class="field" id="authNameField" style="display:none;"><label>الاسم</label><input type="text" id="authName" placeholder="الاسم بالكامل" autocomplete="off"></div>
+        <div class="field" id="authPhoneField" style="display:none;"><label>رقم التليفون</label><input type="tel" id="authPhone" placeholder="01xxxxxxxxx" autocomplete="off"></div>
+        <div class="field" id="authRegionField" style="display:none;"><label>المنطقة</label><input type="text" id="authRegion" placeholder="مثال: الفيوم" autocomplete="off"></div>
+        <div class="field" id="authJobField" style="display:none;"><label>الوظيفة</label><input type="text" id="authJob" placeholder="مثال: مندوب مبيعات" autocomplete="off"></div>
         <button type="submit" class="btn btn-primary btn-block" id="authSubmitBtn">دخول</button>
       </form>
       <div class="auth-loading" id="authLoading">جارِ التحقق…</div>
@@ -385,20 +388,30 @@ function setAuthMode(mode){
   authMode = mode;
   const jobField = document.getElementById('authJobField');
   const jobInput = document.getElementById('authJob');
+  const nameField = document.getElementById('authNameField');
+  const nameInput = document.getElementById('authName');
+  const phoneField = document.getElementById('authPhoneField');
+  const phoneInput = document.getElementById('authPhone');
+  const regionField = document.getElementById('authRegionField');
+  const regionInput = document.getElementById('authRegion');
   if(mode==='login'){
     authTitle.textContent = 'تسجيل الدخول';
     authSub.textContent = 'ادخل بياناتك للوصول لحسابات المؤسسة';
     authSubmitBtn.textContent = 'دخول';
     authToggle.innerHTML = 'لسه معملتش حساب؟ <a id="authToggleLink">إنشاء حساب جديد</a>';
-    jobField.style.display = 'none';
-    jobInput.required = false;
+    jobField.style.display = 'none'; jobInput.required = false;
+    nameField.style.display = 'none'; nameInput.required = false;
+    phoneField.style.display = 'none'; phoneInput.required = false;
+    regionField.style.display = 'none'; regionInput.required = false;
   }else{
     authTitle.textContent = 'إنشاء حساب جديد';
     authSub.textContent = 'أنشئ حساب للوصول لحسابات المؤسسة';
     authSubmitBtn.textContent = 'إنشاء الحساب';
     authToggle.innerHTML = 'عندك حساب بالفعل؟ <a id="authToggleLink">تسجيل الدخول</a>';
-    jobField.style.display = '';
-    jobInput.required = true;
+    jobField.style.display = ''; jobInput.required = true;
+    nameField.style.display = ''; nameInput.required = true;
+    phoneField.style.display = ''; phoneInput.required = true;
+    regionField.style.display = ''; regionInput.required = true;
   }
   authError.classList.remove('show');
   document.getElementById('authToggleLink').onclick = ()=> setAuthMode(mode==='login'?'signup':'login');
@@ -441,6 +454,9 @@ authForm.onsubmit = async (ev)=>{
   const email = document.getElementById('authEmail').value.trim();
   const password = document.getElementById('authPassword').value;
   const job = (document.getElementById('authJob').value || '').trim();
+  const fullName = (document.getElementById('authName').value || '').trim();
+  const phone = (document.getElementById('authPhone').value || '').trim();
+  const region = (document.getElementById('authRegion').value || '').trim();
   authError.classList.remove('show');
   authForm.style.display = 'none';
   authLoading.classList.add('show');
@@ -452,6 +468,9 @@ authForm.onsubmit = async (ev)=>{
       const isAdmin = isAdminEmail(email);
       await setDoc(doc(db, 'users', cred.user.uid), {
         email: email,
+        name: fullName,
+        phone: phone,
+        region: region,
         job: job,
         status: isAdmin ? 'approved' : 'pending',
         permissions: isAdmin
@@ -591,8 +610,11 @@ async function loadAdminUsers(){
        </label>`
     ).join('');
     return `<div class="card" style="margin-bottom:14px; padding:14px;">
-      <div style="font-weight:800;">${esc(u.email||'')}</div>
-      <div style="font-size:12.5px; color:var(--ink-soft); margin-bottom:8px;">الوظيفة: ${esc(u.job||'—')} — ${statusLabel}</div>
+      <div style="font-weight:800;">${esc(u.name||u.email||'')}</div>
+      <div style="font-size:12.5px; color:var(--ink-soft); margin-bottom:8px;">
+        ${esc(u.email||'')}${u.phone?' — '+esc(u.phone):''}${u.region?' — '+esc(u.region):''}<br>
+        الوظيفة: ${esc(u.job||'—')} — ${statusLabel}
+      </div>
       <div>${checks}</div>
       <div style="display:flex; gap:8px; margin-top:10px;">
         <button class="btn btn-primary btn-sm" data-approve="${u.id}">حفظ / موافقة</button>
